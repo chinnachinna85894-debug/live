@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Live · Viewer</title>
+<style>
+  :root{
+    --bg:#05080d;
+    --text:#fff;
+    --dim:#c8d2df;
+    --accent:#4f8cff;
+    --accent-2:#3a72d8;
+    --red:#ef4444;
+    --green:#22c55e;
+    --chat-w:340px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:14px;overflow:hidden;
+    overscroll-behavior:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  button{font:inherit}
+
+  .stage{
+    position:fixed;inset:0;
+    top:env(safe-area-inset-top, 0);
+    bottom:env(safe-area-inset-bottom, 0);
+    left:env(safe-area-inset-left, 0);
+    right:env(safe-area-inset-right, 0);
+    display:flex;align-items:center;justify-content:center;
+    background:#000;
+    touch-action:none;
+    user-select:none;
+    -webkit-user-select:none;
+    overflow:hidden;
+  }
+
+  #remoteVideo{
+    width:100%;height:100%;display:block;background:#000;
+    object-fit:cover;
+    object-position:center center;
+    transition:transform .18s ease-out, object-fit .2s ease, opacity .3s ease;
+    will-change:transform;
+    transform-origin:center center;
+    touch-action:none;
+    opacity:0;
+  }
+  #remoteVideo.playing{opacity:1}
+  #remoteVideo.zoomed{cursor:grab}
+  #remoteVideo.zoomed.dragging{cursor:grabbing;transition:none}
+
+  .live-badge{
+    position:absolute;
+    top:calc(14px + env(safe-area-inset-top, 0));
+    left:calc(14px + env(safe-area-inset-left, 0));
+    z-index:6;
+    display:inline-flex;align-items:center;gap:7px;
+    background:transparent;
+    border:none;
+    color:#fff;
+    font-size:12px;font-weight:800;letter-spacing:1.2px;
+    padding:0;
+    text-transform:uppercase;
+    text-shadow:0 1px 4px rgba(0,0,0,.9), 0 0 10px rgba(0,0,0,.7);
+    pointer-events:none;
+    opacity:0;
+    transition:opacity .3s ease;
+  }
+  .live-badge.show{opacity:1}
+  .live-badge .dot{
+    width:9px;height:9px;border-radius:50%;
+    background:var(--red);
+    box-shadow:0 0 8px rgba(239,68,68,.9), 0 0 2px rgba(0,0,0,.9);
+    animation:dotPulse 1.4s infinite;
+  }
+  @keyframes dotPulse{
+    0%,100%{opacity:1;transform:scale(1)}
+    50%    {opacity:.45;transform:scale(.75)}
+  }
+
+  /* Announcement overlay — centered, clickable, single-line main text */
+  .announcement{
+    position:absolute;
+    left:50%;
+    top:50%;
+    transform:translate(-50%, -50%) scale(.92);
+    z-index:7;
+    max-width:calc(100vw - 24px);
+    padding:18px 32px;
+    background:rgba(0,0,0,.62);
+    backdrop-filter:blur(16px) saturate(150%);
+    -webkit-backdrop-filter:blur(16px) saturate(150%);
+    border:1px solid rgba(255,255,255,.2);
+    border-radius:18px;
+    color:#fff;
+    font-weight:900;
+    text-align:center;
+    text-transform:uppercase;
+    text-shadow:0 3px 10px rgba(0,0,0,.95), 0 0 24px rgba(0,0,0,.75);
+    box-shadow:0 16px 48px rgba(0,0,0,.65);
+    pointer-events:none;
+    cursor:pointer;
+    opacity:0;
+    transition:opacity .35s ease, transform .35s ease;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:8px;
+  }
+  .announcement.show{
+    opacity:1;
+    pointer-events:auto;
+    transform:translate(-50%, -50%) scale(1);
+    animation:announcePulse 2.6s ease-in-out infinite;
+  }
+  @keyframes announcePulse{
+    0%,100%{ transform:translate(-50%, -50%) scale(1); }
+    50%    { transform:translate(-50%, -50%) scale(1.05); }
+  }
+
+  /* The main announcement text */
+  .announce-text{
+    display:block;
+    font-size:clamp(20px, 5vw, 42px);
+    letter-spacing:1.2px;
+    line-height:1.1;
+    white-space:nowrap;
+  }
+
+  /* The "tap to give" hint — only visible when .giving is set */
+  .announce-hint{
+    display:none;
+    font-size:clamp(11px, 1.6vw, 14px);
+    font-weight:700;
+    letter-spacing:1.4px;
+    color:#a7f3c9;
+    text-transform:uppercase;
+    text-shadow:0 2px 6px rgba(0,0,0,.9);
+    margin-top:2px;
+    animation:hintPulse 1.8s ease-in-out infinite;
+  }
+  .announcement.giving .announce-hint{display:block}
+  .announcement.giving .announce-text{color:#d3f9df}
+  @keyframes hintPulse{
+    0%,100%{ opacity:.75; }
+    50%    { opacity:1; }
+  }
+
+  @media (max-width:520px){
+    .announcement{
+      padding:12px 16px;
+      border-radius:14px;
+      gap:6px;
+    }
+    .announce-text{
+      font-size:clamp(13px, 4.2vw, 22px);
+      letter-spacing:.5px;
+    }
+    .announce-hint{
+      font-size:10px;
+      letter-spacing:1.1px;
+    }
+  }
+
+  .controls{
+    position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:40;
+    bottom:calc(22px + env(safe-area-inset-bottom, 0));
+    display:flex;gap:10px;padding:10px;border-radius:16px;
+    background:rgba(19,26,37,.55);
+    backdrop-filter:blur(14px) saturate(140%);
+    -webkit-backdrop-filter:blur(14px) saturate(140%);
+    border:1px solid rgba(255,255,255,.08);
+    transition:opacity .3s, transform .3s;
+    align-items:center;
+    max-width:calc(100vw - 24px);
+    flex-wrap:nowrap;
+  }
+  .controls.hidden{opacity:0;transform:translate(-50%,20px);pointer-events:none}
+  .btn{
+    appearance:none;border:1px solid rgba(255,255,255,.12);
+    background:rgba(27,36,50,.55);color:var(--text);
+    backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    padding:11px 16px;border-radius:11px;font-size:13.5px;font-weight:600;
+    cursor:pointer;display:inline-flex;align-items:center;gap:7px;
+    transition:.15s background,.15s border-color,.15s transform;white-space:nowrap;
+  }
+  .btn:hover:not(:disabled){background:rgba(40,52,68,.7);border-color:rgba(255,255,255,.2)}
+  .btn:active:not(:disabled){transform:translateY(1px)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn.icon{padding:11px 13px}
+  .btn.on{background:rgba(79,140,255,.55);border-color:rgba(79,140,255,.75);color:#fff}
+
+  .btn.give{
+    background:rgba(34,197,94,.22);
+    border-color:rgba(34,197,94,.55);
+    color:#d3f9df;
+    font-weight:800;
+  }
+  .btn.give:hover:not(:disabled){
+    background:rgba(34,197,94,.35);
+    border-color:rgba(34,197,94,.75);
+  }
+  .btn.give.on{
+    background:rgba(34,197,94,.75);
+    border-color:rgba(34,197,94,1);
+    color:#fff;
+    animation:giveFlash 1s ease-in-out infinite;
+  }
+  @keyframes giveFlash{
+    0%,100%{ box-shadow:0 0 0 0 rgba(34,197,94,.7); }
+    50%    { box-shadow:0 0 0 8px rgba(34,197,94,0); }
+  }
+
+  .btn .badge-dot{
+    position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;
+    background:var(--red);display:none;
+  }
+  .btn.has-new{position:relative}
+  .btn.has-new .badge-dot{display:block;animation:dotPulse 1.4s infinite}
+
+  .zoom-group{
+    display:inline-flex;align-items:stretch;
+    background:rgba(27,36,50,.55);
+    backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:11px;
+    overflow:hidden;
+    flex:0 0 auto;
+    height:42px;
+  }
+  .zoom-btn{
+    appearance:none;border:none;background:transparent;color:var(--text);
+    font:inherit;font-size:18px;font-weight:700;
+    padding:0 12px;
+    cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:38px;
+    transition:background .15s;
+    line-height:1;
+  }
+  .zoom-btn:hover:not(:disabled){background:rgba(79,140,255,.2)}
+  .zoom-btn:active:not(:disabled){background:rgba(79,140,255,.35)}
+  .zoom-btn:disabled{opacity:.4;cursor:not-allowed}
+  .zoom-level{
+    appearance:none;
+    border:none;
+    border-left:1px solid rgba(255,255,255,.12);
+    border-right:1px solid rgba(255,255,255,.12);
+    background:transparent;
+    color:var(--text);
+    font:inherit;font-size:12px;font-weight:800;
+    padding:0 8px;
+    min-width:44px;
+    cursor:pointer;
+    font-variant-numeric:tabular-nums;
+    transition:background .15s,color .15s;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .zoom-level:hover{background:rgba(79,140,255,.2);color:var(--accent)}
+  .zoom-level:active{background:rgba(79,140,255,.35)}
+  .zoom-level.active{color:var(--accent)}
+
+  .chat{
+    position:fixed;top:0;right:0;bottom:0;
+    width:var(--chat-w);z-index:30;
+    background:transparent;
+    border:none;
+    box-shadow:none;
+    display:flex;flex-direction:column;
+    transform:translateX(100%);transition:transform .28s ease;
+  }
+  body.chat-open .chat{transform:none}
+  @media (max-width:720px){ .chat{width:100%} }
+
+  .chat-head{
+    flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+    padding:14px 16px;padding-top:calc(14px + env(safe-area-inset-top, 0));
+    border-bottom:none;
+    font-size:12px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;color:#fff;
+    background:transparent;
+    text-shadow:0 1px 4px rgba(0,0,0,.95), 0 0 12px rgba(0,0,0,.7);
+  }
+  .chat-head .title{display:flex;align-items:center;gap:8px}
+  .chat-head .count{
+    background:transparent;border:none;padding:0;
+    font-size:12px;color:#fff;font-weight:700;letter-spacing:0;
+    text-shadow:0 1px 4px rgba(0,0,0,.95);
+  }
+  .chat-head .close{
+    background:transparent;
+    border:none;color:#fff;cursor:pointer;
+    font-size:22px;line-height:1;
+    padding:2px 8px;border-radius:6px;
+    text-shadow:0 1px 4px rgba(0,0,0,.95);
+    transition:opacity .15s;
+  }
+  .chat-head .close:hover{opacity:.75}
+
+  .chat-body{
+    flex:1;overflow-y:auto;padding:10px 16px;min-height:0;
+    display:flex;flex-direction:column;gap:10px;
+  }
+  .chat-body::-webkit-scrollbar{width:6px}
+  .chat-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}
+  .chat-body::-webkit-scrollbar-track{background:transparent}
+
+  .chat-empty{
+    color:#fff;font-size:13px;text-align:left;padding:8px 0;line-height:1.6;
+    text-shadow:0 1px 4px rgba(0,0,0,.95), 0 0 12px rgba(0,0,0,.7);
+    opacity:.85;
+  }
+
+  .cmt{
+    background:transparent;
+    border:none;
+    padding:0;
+    font-size:13.5px;line-height:1.5;
+    animation:slideIn .18s ease-out;
+  }
+  @keyframes slideIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .cmt .who{
+    display:inline;
+    font-size:13px;font-weight:800;letter-spacing:.2px;
+    color:#fff;margin-right:6px;
+    text-shadow:0 1px 4px rgba(0,0,0,.95), 0 0 12px rgba(0,0,0,.7);
+  }
+  .cmt .txt{
+    color:#fff;
+    text-shadow:0 1px 4px rgba(0,0,0,.95), 0 0 12px rgba(0,0,0,.7);
+    word-wrap:break-word;overflow-wrap:break-word;
+  }
+  .cmt.self .who{color:#a8c6ff}
+  .cmt.host .who{color:#fcd34d}
+
+  .chat-input{
+    flex:0 0 auto;display:flex;gap:8px;padding:12px 16px;
+    padding-bottom:calc(12px + env(safe-area-inset-bottom, 0));
+    border-top:none;
+    background:transparent;
+  }
+  .chat-input input{
+    flex:1;min-width:0;
+    background:rgba(0,0,0,.35);
+    border:1px solid rgba(255,255,255,.2);
+    color:#fff;
+    padding:9px 12px;border-radius:8px;font-size:13.5px;outline:none;
+    backdrop-filter:blur(8px);
+    -webkit-backdrop-filter:blur(8px);
+  }
+  .chat-input input:focus{border-color:var(--accent);background:rgba(0,0,0,.55)}
+  .chat-input input::placeholder{color:rgba(255,255,255,.7)}
+  .chat-input input:disabled{opacity:.5}
+  .chat-input button{
+    appearance:none;border:none;background:transparent;color:#fff;
+    padding:0 8px;font-size:13px;font-weight:800;
+    cursor:pointer;
+    text-shadow:0 1px 4px rgba(0,0,0,.95);
+    letter-spacing:.5px;
+  }
+  .chat-input button:hover:not(:disabled){color:var(--accent)}
+  .chat-input button:disabled{opacity:.4;cursor:not-allowed}
+
+  html:fullscreen .chat,
+  html:-webkit-full-screen .chat{
+    position:fixed;top:0;right:0;bottom:0;
+    width:min(100%, var(--chat-w));
+    transform:translateX(100%);
+    z-index:60;
+  }
+  html:fullscreen body.chat-open .chat,
+  html:-webkit-full-screen body.chat-open .chat{transform:none}
+
+  @media (max-width:520px){
+    .btn{padding:10px 12px;font-size:13px}
+    .btn.icon{padding:10px 11px}
+    .live-badge{font-size:10.5px}
+    .controls{gap:6px;padding:8px;border-radius:14px;bottom:calc(14px + env(safe-area-inset-bottom, 0))}
+    .zoom-group{height:38px}
+    .zoom-btn{padding:0 9px;min-width:32px;font-size:16px}
+    .zoom-level{min-width:38px;font-size:11px;padding:0 6px}
+  }
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage">
+  <video id="remoteVideo" autoplay playsinline muted></video>
+
+  <div class="live-badge" id="liveBadge">
+    <span class="dot"></span> Live
+  </div>
+
+  <div class="announcement" id="announcement">
+    <span class="announce-text" id="announceText"></span>
+    <span class="announce-hint" id="announceHint">Tap to give →</span>
+  </div>
+</div>
+
+<div class="controls hidden" id="controls">
+  <button class="btn icon" id="btnPlay" title="Unmute / play" disabled>🔇</button>
+
+  <button class="btn give" id="btnGive" title="Give / Offerings">
+    <span style="font-size:15px;line-height:1">💝</span> Give
+  </button>
+
+  <div class="zoom-group" role="group" aria-label="Zoom">
+    <button class="zoom-btn" id="btnZoomOut" title="Zoom out (−)">−</button>
+    <button class="zoom-level" id="btnZoomReset" title="Reset zoom to 100%">1×</button>
+    <button class="zoom-btn" id="btnZoomIn" title="Zoom in (+)">+</button>
+  </div>
+
+  <button class="btn icon" id="btnFullscreen" title="Fullscreen">⛶</button>
+  <button class="btn icon" id="btnChat" title="Comments">💬
+    <span class="badge-dot"></span>
+  </button>
+</div>
+
+<aside class="chat" id="chatPanel">
+  <div class="chat-head">
+    <div class="title">
+      <span>💬 Live Comments</span>
+      <span class="count" id="chatCount">0</span>
+    </div>
+    <button class="close" id="btnCloseChat" aria-label="Close">×</button>
+  </div>
+  <div class="chat-body" id="chatBody">
+    <div class="chat-empty" id="chatEmpty">
+      No comments yet. Be the first to say hi! 👋
+    </div>
+  </div>
+  <div class="chat-input">
+    <input id="chatInput" placeholder="Say something…" maxlength="200" autocomplete="off" disabled>
+    <button id="chatSend" disabled>Send</button>
+  </div>
+</aside>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  const CHANNEL_ID = 'livestream-public-single-channel-v1';
+  const GIVE_URL = 'https://razorpay.me/@melanginehemiya';
+
+  const PEER_OPTS = {
+    host: location.hostname,
+    port: location.port || (location.protocol === 'https:' ? 443 : 80),
+    path: '/peerjs',
+    secure: location.protocol === 'https:',
+    debug: 2,
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' }
+      ]
+    }
+  };
+
+  const $ = (id) => document.getElementById(id);
+
+  const NAMES = ['Panda','Fox','Owl','Tiger','Wolf','Bear','Lynx','Hawk','Koala','Otter',
+                 'Robin','Falcon','Penguin','Dolphin','Rabbit','Swan','Jaguar','Cobra'];
+  const viewerName = NAMES[Math.floor(Math.random() * NAMES.length)] +
+                     '-' + Math.floor(1000 + Math.random() * 9000);
+
+  const stage           = $('stage');
+  const video           = $('remoteVideo');
+  const liveBadge       = $('liveBadge');
+  const announcementEl  = $('announcement');
+  const announceTextEl  = $('announceText');
+  const announceHintEl  = $('announceHint');
+  const controls        = $('controls');
+  const chatBody        = $('chatBody');
+  const chatEmpty       = $('chatEmpty');
+  const chatCount       = $('chatCount');
+  const chatInput       = $('chatInput');
+  const chatSend        = $('chatSend');
+  const btnChat         = $('btnChat');
+  const btnGive         = $('btnGive');
+
+  let peer = null;
+  let conn = null;
+  let activeCall = null;
+  let audioOn = false;
+  let idleTimer = null;
+  let retryTimer = null;
+  let destroyed = false;
+  let commentCount = 0;
+  let unreadComments = 0;
+
+  let streamActive = false;
+
+  function log(...a) { console.log('[viewer]', ...a); }
+
+  function showControls() {
+    controls.classList.remove('hidden');
+    if (streamActive) liveBadge.classList.add('show');
+    resetIdleTimer();
+  }
+  function hideControls() {
+    controls.classList.add('hidden');
+    liveBadge.classList.remove('show');
+  }
+  function resetIdleTimer() {
+    clearTimeout(idleTimer);
+    if (document.body.classList.contains('chat-open') && window.innerWidth <= 720) return;
+    idleTimer = setTimeout(hideControls, 3200);
+  }
+
+  function updateAudioButton() {
+    const b = $('btnPlay');
+    b.textContent = audioOn ? '🔊' : '🔇';
+    b.title = audioOn ? 'Mute' : 'Unmute / play';
+  }
+
+  function updateVideoFit() {
+    const isMobile = window.matchMedia('(max-width: 720px)').matches;
+    const isPortrait = window.innerHeight >= window.innerWidth;
+    const useContain = isMobile && isPortrait;
+    const desired = useContain ? 'contain' : 'cover';
+    if (video.style.objectFit !== desired) {
+      video.style.objectFit = desired;
+    }
+    if (typeof clampPan === 'function') clampPan();
+    if (typeof zoomLevel !== 'undefined' && zoomLevel !== 1 && typeof applyZoom === 'function') {
+      applyZoom();
+    }
+  }
+
+  window.addEventListener('orientationchange', () => {
+    setTimeout(updateVideoFit, 120);
+    setTimeout(updateVideoFit, 400);
+  });
+  window.addEventListener('resize', () => setTimeout(updateVideoFit, 60));
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => setTimeout(updateVideoFit, 60));
+  }
+
+  const ZOOM_MIN = 1;
+  const ZOOM_MAX = 5.0;
+  const ZOOM_STEP = 0.25;
+
+  let zoomLevel = 1;
+  let panX = 0, panY = 0;
+
+  const btnZoomReset = $('btnZoomReset');
+  const btnZoomIn = $('btnZoomIn');
+  const btnZoomOut = $('btnZoomOut');
+
+  function clampPan() {
+    const rect = stage.getBoundingClientRect();
+    const maxX = Math.max(0, (rect.width * (zoomLevel - 1)) / 2);
+    const maxY = Math.max(0, (rect.height * (zoomLevel - 1)) / 2);
+    panX = Math.max(-maxX, Math.min(maxX, panX));
+    panY = Math.max(-maxY, Math.min(maxY, panY));
+  }
+
+  function applyZoom() {
+    if (zoomLevel <= 1) { panX = 0; panY = 0; }
+    clampPan();
+    video.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`;
+    video.classList.toggle('zoomed', zoomLevel > 1);
+    updateZoomLabel();
+  }
+
+  function updateZoomLabel() {
+    const rounded = Math.round(zoomLevel * 100) / 100;
+    let label;
+    if (Number.isInteger(rounded)) label = rounded + '×';
+    else label = rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') + '×';
+    btnZoomReset.textContent = label;
+    btnZoomReset.classList.toggle('active', Math.abs(zoomLevel - 1) > 0.01);
+    btnZoomOut.disabled = zoomLevel <= ZOOM_MIN + 0.001;
+    btnZoomIn.disabled = zoomLevel >= ZOOM_MAX - 0.001;
+  }
+
+  function setZoom(z) {
+    zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    applyZoom();
+  }
+
+  function resetZoom() {
+    zoomLevel = 1;
+    panX = 0;
+    panY = 0;
+    applyZoom();
+  }
+
+  btnZoomIn.addEventListener('click', () => { setZoom(zoomLevel + ZOOM_STEP); resetIdleTimer(); });
+  btnZoomOut.addEventListener('click', () => { setZoom(zoomLevel - ZOOM_STEP); resetIdleTimer(); });
+  btnZoomReset.addEventListener('click', () => { resetZoom(); resetIdleTimer(); });
+
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+    setZoom(zoomLevel + delta);
+  }, { passive: false });
+
+  let dragging = false;
+  let dragSX = 0, dragSY = 0, dragPanX = 0, dragPanY = 0;
+
+  video.addEventListener('mousedown', (e) => {
+    if (zoomLevel <= 1 || e.button !== 0) return;
+    dragging = true;
+    dragSX = e.clientX; dragSY = e.clientY;
+    dragPanX = panX; dragPanY = panY;
+    video.classList.add('dragging');
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    panX = dragPanX + (e.clientX - dragSX);
+    panY = dragPanY + (e.clientY - dragSY);
+    clampPan();
+    video.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`;
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    video.classList.remove('dragging');
+  });
+
+  let touchMode = null;
+  let pinchStartDist = 0;
+  let pinchStartZoom = 1;
+  let touchSX = 0, touchSY = 0, touchPanX = 0, touchPanY = 0;
+
+  function touchDist(a, b) {
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+
+  stage.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      touchMode = 'pinch';
+      pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+      pinchStartZoom = zoomLevel;
+    } else if (e.touches.length === 1 && zoomLevel > 1) {
+      touchMode = 'drag';
+      touchSX = e.touches[0].clientX;
+      touchSY = e.touches[0].clientY;
+      touchPanX = panX; touchPanY = panY;
+    }
+  }, { passive: true });
+
+  stage.addEventListener('touchmove', (e) => {
+    if (touchMode === 'pinch' && e.touches.length === 2) {
+      const d = touchDist(e.touches[0], e.touches[1]);
+      if (pinchStartDist > 0) {
+        zoomLevel = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
+                    pinchStartZoom * (d / pinchStartDist)));
+        applyZoom();
+      }
+      e.preventDefault();
+    } else if (touchMode === 'drag' && e.touches.length === 1) {
+      panX = touchPanX + (e.touches[0].clientX - touchSX);
+      panY = touchPanY + (e.touches[0].clientY - touchSY);
+      clampPan();
+      video.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`;
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  stage.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) touchMode = null;
+  }, { passive: true });
+
+  stage.addEventListener('touchcancel', () => { touchMode = null; }, { passive: true });
+
+  video.addEventListener('dblclick', () => {
+    if (zoomLevel > 1) resetZoom();
+    else setZoom(2);
+  });
+
+  function addComment({ name, text, self, host }) {
+    if (!text) return;
+    if (chatEmpty && chatEmpty.parentNode) chatEmpty.remove();
+    const div = document.createElement('div');
+    div.className = 'cmt' + (self ? ' self' : '') + (host ? ' host' : '');
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = name + (host ? ' · host' : '');
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    txt.textContent = text;
+    div.appendChild(who); div.appendChild(txt);
+    chatBody.appendChild(div);
+    const nearBottom = chatBody.scrollHeight - chatBody.scrollTop - chatBody.clientHeight < 80;
+    if (nearBottom) chatBody.scrollTop = chatBody.scrollHeight;
+    commentCount++;
+    chatCount.textContent = commentCount;
+    if (!document.body.classList.contains('chat-open') && !self) {
+      unreadComments++;
+      btnChat.classList.add('has-new');
+    }
+  }
+
+  function sendComment() {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    chatInput.value = '';
+    addComment({ name: viewerName, text, self: true });
+    if (conn && conn.open) {
+      try { conn.send({ type: 'comment', name: viewerName, text }); } catch (e) {}
+    }
+    chatInput.focus();
+  }
+
+  chatSend.addEventListener('click', sendComment);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(); }
+  });
+
+  function toggleChat(force) {
+    const open = force !== undefined ? force : !document.body.classList.contains('chat-open');
+    document.body.classList.toggle('chat-open', open);
+    btnChat.classList.toggle('on', open);
+    if (open) {
+      unreadComments = 0;
+      btnChat.classList.remove('has-new');
+      setTimeout(() => {
+        chatBody.scrollTop = chatBody.scrollHeight;
+        if (!chatInput.disabled) chatInput.focus();
+      }, 60);
+      showControls();
+    } else resetIdleTimer();
+  }
+
+  btnChat.addEventListener('click', () => toggleChat());
+  $('btnCloseChat').addEventListener('click', () => toggleChat(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.body.classList.contains('chat-open')) toggleChat(false);
+  });
+
+  /* Give button */
+  btnGive.addEventListener('click', () => {
+    log('opening give link:', GIVE_URL);
+    window.open(GIVE_URL, '_blank', 'noopener,noreferrer');
+    resetIdleTimer();
+  });
+
+  /* Announcement banner — opens give page ONLY for tithes/offerings */
+  announcementEl.addEventListener('click', () => {
+    if (!announcementEl.classList.contains('show')) return;
+    if (!announcementEl.classList.contains('giving')) {
+      log('announcement tapped but not a giving message — ignoring');
+      return;
+    }
+    log('giving announcement tapped — opening give link');
+    window.open(GIVE_URL, '_blank', 'noopener,noreferrer');
+  });
+
+  /* Announcement helpers — hidden by default */
+  function showAnnouncement(text) {
+    if (!text) return;
+    announceTextEl.textContent = text;
+
+    const lower = text.toLowerCase();
+    const isGiving =
+      lower.includes('tithe') ||
+      lower.includes('offering') ||
+      lower.includes('give') ||
+      lower.includes('donat');
+
+    announcementEl.classList.toggle('giving', isGiving);
+    announcementEl.classList.add('show');
+
+    if (isGiving) {
+      btnGive.classList.add('on');
+      setTimeout(() => btnGive.classList.remove('on'), 4000);
+    }
+  }
+  function hideAnnouncement() {
+    announcementEl.classList.remove('show');
+    announcementEl.classList.remove('giving');
+    announceTextEl.textContent = '';
+    btnGive.classList.remove('on');
+  }
+
+  function attachStream(stream) {
+    if (!stream) return;
+
+    resetZoom();
+    video.classList.remove('playing');
+
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
+
+    video.muted = true;
+    audioOn = false;
+    updateAudioButton();
+
+    const tryPlay = () => {
+      const p = video.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => {
+          log('video playing');
+          video.classList.add('playing');
+        }).catch((err) => {
+          log('video.play() rejected:', err && err.name);
+          const resume = () => {
+            video.play().then(() => {
+              video.classList.add('playing');
+              log('video resumed after gesture');
+            }).catch((e) => log('resume failed', e && e.name));
+            document.removeEventListener('click', resume, true);
+            document.removeEventListener('touchstart', resume, true);
+            document.removeEventListener('keydown', resume, true);
+          };
+          document.addEventListener('click', resume, true);
+          document.addEventListener('touchstart', resume, true);
+          document.addEventListener('keydown', resume, true);
+        });
+      }
+    };
+
+    tryPlay();
+    video.onloadedmetadata = () => { tryPlay(); };
+    video.oncanplay = () => { tryPlay(); };
+  }
+
+  function cleanup() {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    if (activeCall) { try { activeCall.close(); } catch (e) {} activeCall = null; }
+    if (conn) { try { conn.close(); } catch (e) {} conn = null; }
+    if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+    video.classList.remove('playing');
+    video.srcObject = null;
+    video.muted = true;
+    audioOn = false;
+    updateAudioButton();
+    resetZoom();
+    streamActive = false;
+    liveBadge.classList.remove('show');
+    // Announcement is NOT cleared here — persists across reconnects
+    $('btnPlay').disabled = true;
+    chatInput.disabled = true;
+    chatSend.disabled = true;
+  }
+
+  function connect() {
+    if (destroyed) return;
+    cleanup();
+    log('connecting…');
+
+    peer = new Peer(PEER_OPTS);
+
+    peer.on('open', () => {
+      log('peer open, connecting to channel', CHANNEL_ID);
+      conn = peer.connect(CHANNEL_ID, { reliable: true });
+
+      conn.on('open', () => {
+        log('data connection open — sending viewer-ready');
+        try { conn.send({ type: 'viewer-ready' }); } catch (e) {}
+        chatInput.disabled = false;
+        chatSend.disabled = false;
+      });
+
+      conn.on('data', (data) => {
+        if (!data || typeof data !== 'object') return;
+        if (data.type === 'comment') {
+          addComment({
+            name: data.name || 'Viewer',
+            text: data.text || '',
+            host: data.name === 'Host',
+          });
+        } else if (data.type === 'announce') {
+          const text = String(data.text || '').trim();
+          if (text) {
+            showAnnouncement(text);
+            log('announcement received:', text);
+          } else {
+            hideAnnouncement();
+            log('announcement cleared');
+          }
+        }
+      });
+
+      conn.on('close', () => {
+        log('data connection closed');
+        scheduleRetry();
+      });
+
+      conn.on('error', (e) => { log('data connection error', e); scheduleRetry(); });
+    });
+
+    peer.on('call', (call) => {
+      log('✓ incoming call from', call.peer);
+
+      clearTimeout(retryTimer);
+      retryTimer = null;
+
+      if (activeCall && activeCall !== call) {
+        try { activeCall.close(); } catch (e) {}
+      }
+      activeCall = call;
+      call.answer();
+
+      call.on('stream', (remoteStream) => {
+        const vTracks = remoteStream.getVideoTracks();
+        const aTracks = remoteStream.getAudioTracks();
+        log('stream received — video:', vTracks.length, 'audio:', aTracks.length);
+
+        attachStream(remoteStream);
+
+        streamActive = true;
+        liveBadge.classList.add('show');
+        showControls();
+        $('btnPlay').disabled = false;
+        updateAudioButton();
+      });
+
+      const pc = call.peerConnection;
+      if (pc) {
+        pc.addEventListener('iceconnectionstatechange', () => {
+          log('ICE state:', pc.iceConnectionState);
+        });
+        pc.addEventListener('connectionstatechange', () => {
+          log('PC state:', pc.connectionState);
+          if (pc.connectionState === 'failed' && activeCall === call) {
+            activeCall = null;
+            video.classList.remove('playing');
+            video.srcObject = null;
+            resetZoom();
+            streamActive = false;
+            liveBadge.classList.remove('show');
+            scheduleRetry();
+          }
+        });
+      }
+
+      call.on('close', () => {
+        log('call closed');
+        if (activeCall === call) {
+          activeCall = null;
+          video.classList.remove('playing');
+          video.srcObject = null;
+          resetZoom();
+          streamActive = false;
+          liveBadge.classList.remove('show');
+          scheduleRetry();
+        }
+      });
+
+      call.on('error', (err) => {
+        log('call error', err);
+        if (activeCall === call) {
+          video.classList.remove('playing');
+          video.srcObject = null;
+          resetZoom();
+          streamActive = false;
+          liveBadge.classList.remove('show');
+          scheduleRetry();
+        }
+      });
+    });
+
+    peer.on('disconnected', () => {
+      log('signaling disconnected');
+      if (!peer.destroyed) { try { peer.reconnect(); } catch (e) {} }
+    });
+
+    peer.on('error', (err) => {
+      log('peer error:', err && err.type);
+      scheduleRetry();
+    });
+  }
+
+  function scheduleRetry() {
+    if (retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      if (destroyed) return;
+      connect();
+    }, 3000);
+  }
+
+  $('btnPlay').addEventListener('click', () => {
+    audioOn = !audioOn;
+    video.muted = !audioOn;
+    if (audioOn) video.play().catch(() => {});
+    updateAudioButton();
+    resetIdleTimer();
+  });
+
+  function isFullscreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement ||
+              document.msFullscreenElement);
+  }
+
+  function enterFullscreen(el) {
+    if (el.requestFullscreen) return el.requestFullscreen();
+    if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
+    if (el.msRequestFullscreen) return el.msRequestFullscreen();
+    return Promise.reject(new Error('Fullscreen not supported'));
+  }
+  function exitFullscreen() {
+    if (document.exitFullscreen) return document.exitFullscreen();
+    if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
+    if (document.msExitFullscreen) return document.msExitFullscreen();
+    return Promise.reject(new Error('Exit fullscreen not supported'));
+  }
+
+  $('btnFullscreen').addEventListener('click', async () => {
+    try {
+      if (!isFullscreen()) {
+        await enterFullscreen(document.documentElement);
+        try {
+          if (screen.orientation && screen.orientation.lock) {
+            await screen.orientation.lock('landscape').catch(() => {});
+          }
+        } catch (e) {}
+      } else {
+        await exitFullscreen();
+      }
+    } catch (e) {
+      console.warn('[viewer] fullscreen failed', e);
+    }
+    setTimeout(updateVideoFit, 100);
+    resetIdleTimer();
+  });
+
+  ['fullscreenchange', 'webkitfullscreenchange', 'msfullscreenchange'].forEach((evt) => {
+    document.addEventListener(evt, () => {
+      resetZoom();
+      setTimeout(() => { updateVideoFit(); applyZoom(); }, 120);
+    });
+  });
+
+  ['mousemove', 'touchstart', 'click'].forEach((evt) => {
+    document.addEventListener(evt, () => {
+      if (window.innerWidth <= 720 && document.body.classList.contains('chat-open')) return;
+      showControls();
+    }, { passive: true });
+  });
+
+  video.addEventListener('pause', () => {
+    if (video.srcObject) video.play().catch(() => {});
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && video.srcObject) {
+      video.play().catch(() => {});
+      setTimeout(updateVideoFit, 100);
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    destroyed = true;
+    try { peer && peer.destroy(); } catch (e) {}
+  });
+
+  updateVideoFit();
+  hideControls();
+  updateZoomLabel();
+  connect();
+})();
+</script>
+</body>
+</html>
